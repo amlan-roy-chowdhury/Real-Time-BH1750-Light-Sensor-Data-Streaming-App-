@@ -6,20 +6,18 @@ import serial
 import serial.tools.list_ports
 import paho.mqtt.client as mqtt
 from PyQt5.QtWidgets import (QApplication, QWidget, QVBoxLayout, QPushButton,
-                             QLabel, QComboBox, QHBoxLayout, QFileDialog)
+                             QLabel, QComboBox, QHBoxLayout, QFileDialog,
+                             QRadioButton, QButtonGroup)
 from PyQt5.QtCore import QTimer
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
 from threading import Thread, Event
 from collections import deque
 
-# --- CONFIGURATION ---
 MQTT_BROKER = "localhost"
 MQTT_TOPIC = "sensor/lux"
-CLOUD_SYNC = False
 CSV_FILE = "lux_log.csv"
 
-# --- GUI CLASS ---
 class SensorDashboard(QWidget):
     def __init__(self):
         super().__init__()
@@ -27,7 +25,6 @@ class SensorDashboard(QWidget):
         self.plot_data = deque(maxlen=500)
         self.timestamps = deque(maxlen=500)
         self.running = False
-        self.serial_port = None
         self.serial_thread = None
         self.mqtt_thread = None
         self.mqtt_client = None
@@ -38,8 +35,20 @@ class SensorDashboard(QWidget):
     def init_ui(self):
         self.setWindowTitle("Real-Time Sensor Dashboard")
 
+        self.stream_mode_label = QLabel("Data Stream Mode:")
+        self.wifi_radio = QRadioButton("WiFi")
+        self.com_radio = QRadioButton("COM")
+        self.wifi_radio.setChecked(True)
+
+        self.mode_group = QButtonGroup()
+        self.mode_group.addButton(self.wifi_radio)
+        self.mode_group.addButton(self.com_radio)
+
+        self.mode_group.buttonClicked.connect(self.toggle_stream_mode)
+
         self.com_label = QLabel("Select COM Port:")
         self.com_dropdown = QComboBox()
+        self.com_dropdown.setEnabled(False)
         self.refresh_com_ports()
 
         self.start_btn = QPushButton("Start")
@@ -49,7 +58,13 @@ class SensorDashboard(QWidget):
 
         self.stop_btn.setEnabled(False)
 
+        mode_box = QHBoxLayout()
+        mode_box.addWidget(self.stream_mode_label)
+        mode_box.addWidget(self.wifi_radio)
+        mode_box.addWidget(self.com_radio)
+
         hbox = QHBoxLayout()
+        hbox.addLayout(mode_box)
         hbox.addWidget(self.com_label)
         hbox.addWidget(self.com_dropdown)
         hbox.addWidget(self.start_btn)
@@ -73,6 +88,10 @@ class SensorDashboard(QWidget):
         self.clear_btn.clicked.connect(self.clear_plot)
         self.reset_btn.clicked.connect(self.reset_timer)
 
+    def toggle_stream_mode(self):
+        use_com = self.com_radio.isChecked()
+        self.com_dropdown.setEnabled(use_com)
+
     def refresh_com_ports(self):
         self.com_dropdown.clear()
         ports = serial.tools.list_ports.comports()
@@ -85,13 +104,16 @@ class SensorDashboard(QWidget):
         self.timer_start_time = time.time()
         self.start_btn.setEnabled(False)
         self.stop_btn.setEnabled(True)
-        selected_port = self.com_dropdown.currentText()
-        if selected_port:
-            self.serial_thread = Thread(target=self.read_serial, args=(selected_port,), daemon=True)
-            self.serial_thread.start()
+
+        if self.com_radio.isChecked():
+            selected_port = self.com_dropdown.currentText()
+            if selected_port:
+                self.serial_thread = Thread(target=self.read_serial, args=(selected_port,), daemon=True)
+                self.serial_thread.start()
         else:
             self.mqtt_thread = Thread(target=self.read_mqtt, daemon=True)
             self.mqtt_thread.start()
+
         self.update_plot()
 
     def stop_stream(self):
@@ -129,9 +151,23 @@ class SensorDashboard(QWidget):
 
         def on_message(client, userdata, msg):
             payload = json.loads(msg.payload.decode())
+
+            
             timestamp = payload.get("timestamp")
+
+            #if using ESP32 internal timestamps to display time
+            #self.timestamps.append(timestamp)
+
+            #if not using the MQTT timestamps, but defaulting to time scale used in COM mode
+            if self.timer_start_time is None:
+                self.timer_start_time = time.time()
+            elapsed_time = int((time.time() - self.timer_start_time) * 1000)
+            self.timestamps.append(elapsed_time)
+            
+
             lux = payload.get("lux")
-            self.timestamps.append(timestamp)
+            
+            
             self.plot_data.append(lux)
             self.log_to_csv(timestamp, lux)
 
