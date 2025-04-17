@@ -1,0 +1,6 @@
+PyQt5
+paho-mqtt
+adafruit-io
+pytest
+pytest-html
+

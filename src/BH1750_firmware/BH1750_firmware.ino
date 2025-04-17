@@ -18,11 +18,10 @@ unsigned long lastSend = 0;
 const int interval = 10;  // 100 Hz = every 10 ms
 
 void setup() {
-  Serial.begin(115200);     // UART Output
-  Wire.begin();             // I2C init
-  lightMeter.begin();       // BH1750 in CONTINUOUS_HIGH_RES_MODE
+  Serial.begin(115200);
+  Wire.begin();
+  lightMeter.begin();
 
-  // --- Connect to WiFi ---
   WiFi.begin(ssid, password);
   while (WiFi.status() != WL_CONNECTED) {
     delay(500);
@@ -30,8 +29,10 @@ void setup() {
   }
   Serial.println("Connected to WiFi");
 
-  // --- MQTT Setup ---
+  // Setup MQTT
   client.setServer(mqtt_server, 1883);
+  client.setKeepAlive(60); // <-- this is how you set keepalive time
+
   while (!client.connected()) {
     Serial.print("Connecting to MQTT...");
     if (client.connect("ESP32Client")) {
@@ -45,8 +46,24 @@ void setup() {
   }
 }
 
+void reconnect() {
+  while (!client.connected()) {
+    Serial.print("Reconnecting to MQTT...");
+    if (client.connect("ESP32Client")) {
+      Serial.println("connected");
+    } else {
+      Serial.print("failed, rc=");
+      Serial.print(client.state());
+      Serial.println(" trying again in 5 seconds");
+      delay(5000);
+    }
+  }
+}
+
 void loop() {
-  // MUST be called every loop to keep MQTT alive
+  if (!client.connected()) {
+    reconnect();
+  }
   client.loop();
 
   unsigned long now = millis();
@@ -54,15 +71,10 @@ void loop() {
     lastSend = now;
 
     float lux = lightMeter.readLightLevel();
-
-    // UART output (required)
     Serial.printf("%lu,%.2f\n", now, lux);
 
-    // MQTT output (wireless)
-    if (client.connected()) {
-      char payload[64];
-      snprintf(payload, sizeof(payload), "{\"timestamp\":%lu,\"lux\":%.2f}", now, lux);
-      client.publish("sensor/lux", payload);
-    }
+    char payload[64];
+    snprintf(payload, sizeof(payload), "{\"timestamp\":%lu,\"lux\":%.2f}", now, lux);
+    client.publish("sensor/lux", payload);
   }
 }
