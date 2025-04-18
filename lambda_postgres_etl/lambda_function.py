@@ -5,6 +5,7 @@ import csv
 from io import StringIO
 from datetime import datetime
 
+
 s3 = boto3.client('s3')
 
 DB_HOST = os.getenv("DB_HOST")
