@@ -4,11 +4,13 @@ import csv
 import json
 import serial
 import os
+import datetime
 import serial.tools.list_ports
 import paho.mqtt.client as mqtt
 from PyQt5.QtWidgets import (QApplication, QWidget, QVBoxLayout, QPushButton,
                              QLabel, QComboBox, QHBoxLayout, QGroupBox,
-                             QRadioButton, QButtonGroup, QFileDialog)
+                             QRadioButton, QButtonGroup, QFileDialog, 
+                             QMessageBox, QFormLayout, QGridLayout)
 from PyQt5.QtCore import QTimer, Qt
 from PyQt5.QtGui import QStandardItemModel, QStandardItem
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
@@ -33,7 +35,6 @@ aio = Client(AIO_USERNAME, AIO_KEY)
 class SensorDashboard(QWidget):
     def __init__(self):
         super().__init__()
-        self.init_ui()
         self.relative_data = deque(maxlen=500)
         self.relative_timestamps = deque(maxlen=500)
         self.gmt_data = deque(maxlen=500)
@@ -47,11 +48,19 @@ class SensorDashboard(QWidget):
         self.timestamp_mode = "Relative"
         self.last_aio_send_time = 0
         self.paused = False
+        self.session_data = []  # stores (rel_time, gmt_time, lux)
+        self.logs_dir = os.path.join(os.path.dirname(__file__), '..', 'logs')
+        os.makedirs(self.logs_dir, exist_ok=True)
+        self.init_ui()
+
 
     def init_ui(self):
         self.setWindowTitle("Real-Time Sensor Dashboard")
 
-        # Stream Mode Group
+        # --- Top Controls Layout ---
+        controls = QHBoxLayout()
+
+        # --- Stream Mode Group ---
         stream_group = QGroupBox("Data Stream Mode")
         self.wifi_radio = QRadioButton("WiFi")
         self.com_radio = QRadioButton("COM")
@@ -65,13 +74,17 @@ class SensorDashboard(QWidget):
         stream_layout.addWidget(self.com_radio)
         stream_group.setLayout(stream_layout)
 
-        # COM Dropdown
+        # --- COM Port Layout ---
         self.com_label = QLabel("Select COM Port:")
         self.com_dropdown = QComboBox()
         self.refresh_com_ports()
         self.com_dropdown.setEnabled(False)
+        com_layout = QFormLayout()
+        com_layout.setSpacing(5)
+        com_layout.setLabelAlignment(Qt.AlignRight)
+        com_layout.addRow(self.com_label, self.com_dropdown)
 
-        # Time Axis Group
+        # --- Time Axis Mode Group ---
         time_group = QGroupBox("Time Axis Mode")
         self.relative_radio = QRadioButton("Relative")
         self.gmt_radio = QRadioButton("GMT")
@@ -85,14 +98,71 @@ class SensorDashboard(QWidget):
         time_layout.addWidget(self.gmt_radio)
         time_group.setLayout(time_layout)
 
-        # Button Group
+        # --- Data Export / Recovery Group ---
+        export_group = QGroupBox("Data Export / Recovery")
+        export_group_layout = QGridLayout()
+        export_group_layout.setVerticalSpacing(10)
+        export_group_layout.setAlignment(Qt.AlignTop)
+
+        # Buttons and tooltips
+        self.export_btn = QPushButton("Export CSV")
+        self.recover_btn = QPushButton("Recover from Temp Log")
+        self.clear_temp_btn = QPushButton("Clear Temp Log")
+
+        # Set all buttons to same fixed width
+        standard_width = 190
+        for btn in [self.export_btn, self.recover_btn, self.clear_temp_btn]:
+            btn.setFixedWidth(standard_width)
+            btn.setStyleSheet("text-align: center; padding: 6px; font-size: 13px;")
+
+        # Tooltip labels
+        self.export_tooltip = QLabel("?")
+        self.export_tooltip.setStyleSheet("color: gray; font-size: 14px; font-weight: bold; padding-left: 4px;")
+        self.export_tooltip.setToolTipDuration(0)
+        self.export_tooltip.setAlignment(Qt.AlignVCenter)
+        self.export_tooltip.setToolTip("""
+            <div style="font-size: 12px; font-style: italic; margin-right: 12px;">
+            Exports the last Start–Stop session to a timestamped CSV file.<br>
+            If skipped, the data is saved in logs/temp_log.csv after Clear or exit.<br>
+            A summary of Min, Max, and Avg is included.
+            </div>
+        """)
+
+        self.recover_tooltip = QLabel("?")
+        self.recover_tooltip.setStyleSheet("color: gray; font-size: 14px; font-weight: bold; padding-left: 4px;")
+        self.recover_tooltip.setToolTipDuration(0)
+        self.recover_tooltip.setAlignment(Qt.AlignVCenter)
+        self.recover_tooltip.setToolTip("""
+            <div style="font-size: 12px; font-style: italic; margin-right: 12px;">
+            Loads unsaved session data from logs/temp_log.csv so it can be exported later.
+            </div>
+        """)
+
+        # Add rows to grid layout
+        export_group_layout.addWidget(self.export_btn, 0, 0)
+        export_group_layout.addWidget(self.export_tooltip, 0, 1)
+        export_group_layout.addWidget(self.recover_btn, 1, 0)
+        export_group_layout.addWidget(self.recover_tooltip, 1, 1)
+        export_group_layout.addWidget(self.clear_temp_btn, 2, 0)
+        export_group.setLayout(export_group_layout)
+
+        # --- Layout Assembly for Top Row ---
+        left_controls = QHBoxLayout()
+        left_controls.addWidget(stream_group)
+        left_controls.addLayout(com_layout)
+        left_controls.addWidget(time_group)
+
+        controls.addLayout(left_controls)
+        controls.addStretch()
+        controls.addWidget(export_group)
+
+        # --- Control Button Box ---
         control_box = QGroupBox("Controls")
         self.start_btn = QPushButton("Start")
         self.pause_btn = QPushButton("Pause")
         self.stop_btn = QPushButton("Stop")
         self.clear_btn = QPushButton("Clear")
         self.reset_btn = QPushButton("Reset Timer")
-        self.export_btn = QPushButton("Export CSV")
         self.stop_btn.setEnabled(False)
 
         button_layout = QHBoxLayout()
@@ -103,6 +173,15 @@ class SensorDashboard(QWidget):
         button_layout.addWidget(self.reset_btn)
         control_box.setLayout(button_layout)
 
+        # --- Plot Area ---
+        self.figure = Figure()
+        self.figure.subplots_adjust(bottom=0.2)  # Ensure X-axis label is visible
+        self.canvas = FigureCanvas(self.figure)
+        self.ax = self.figure.add_subplot(111)
+        self.ax.set_xlabel("Time")
+        self.ax.set_ylabel("Lux")
+
+        # --- Display Labels ---
         self.current_lux_label = QLabel("Current Lux: --")
         self.current_lux_label.setAlignment(Qt.AlignCenter)
         self.current_lux_label.setStyleSheet("font-size: 20px; font-weight: bold;")
@@ -114,7 +193,7 @@ class SensorDashboard(QWidget):
         self.min_label = QLabel("Min: --")
         self.max_label = QLabel("Max: --")
         self.avg_label = QLabel("Avg: --")
-        
+
         for lbl in [self.min_label, self.max_label, self.avg_label]:
             lbl.setAlignment(Qt.AlignCenter)
             lbl.setStyleSheet("""
@@ -124,8 +203,7 @@ class SensorDashboard(QWidget):
                 border-radius: 4px;
                 min-width: 80px;
             """)
-            
-        # Last Updated Timestamp Label
+
         self.updated_label = QLabel("Last Updated: --")
         self.updated_label.setAlignment(Qt.AlignCenter)
         self.updated_label.setStyleSheet("""
@@ -134,33 +212,13 @@ class SensorDashboard(QWidget):
             color: gray;
             margin-top: 4px;
         """)
-        
-        # Warning alert
-        self.warning_label = QLabel("Please clear the plot before restarting.")
+
+        self.warning_label = QLabel("Please export csv (if needed) and then clear the plot before restarting.")
         self.warning_label.setAlignment(Qt.AlignCenter)
-        self.warning_label.setStyleSheet("""
-            font-size: 11px;
-            font-style: italic;
-            color: darkred;
-        """)
+        self.warning_label.setStyleSheet("font-size: 11px; font-style: italic; color: red;")
         self.warning_label.hide()
 
-
-
-        controls = QHBoxLayout()
-        controls.addWidget(stream_group)
-        controls.addWidget(self.com_label)
-        controls.addWidget(self.com_dropdown)
-        controls.addWidget(time_group)
-        controls.addWidget(self.export_btn)
-
-        self.figure = Figure()
-        self.canvas = FigureCanvas(self.figure)
-        self.ax = self.figure.add_subplot(111)
-        self.ax.set_xlabel("Time")
-        self.ax.set_ylabel("Lux")
-
-        # Create stats layout with borders and spacing
+        # --- Stats Layout ---
         stats_layout = QHBoxLayout()
         stats_layout.setSpacing(15)
         stats_layout.addStretch()
@@ -169,7 +227,7 @@ class SensorDashboard(QWidget):
         stats_layout.addWidget(self.avg_label)
         stats_layout.addStretch()
 
-        # Main layout setup
+        # --- Final Layout ---
         layout = QVBoxLayout()
         layout.addLayout(controls)
         layout.addWidget(control_box)
@@ -177,17 +235,22 @@ class SensorDashboard(QWidget):
         layout.addWidget(self.warning_label)
         layout.addWidget(self.current_lux_label)
         layout.addWidget(self.adafruit_status)
-        layout.addLayout(stats_layout) 
         layout.addLayout(stats_layout)
         layout.addWidget(self.updated_label)
         self.setLayout(layout)
 
+        # --- Signal Connections ---
         self.start_btn.clicked.connect(self.start_stream)
         self.stop_btn.clicked.connect(self.stop_stream)
         self.clear_btn.clicked.connect(self.clear_plot)
         self.reset_btn.clicked.connect(self.reset_timer)
         self.export_btn.clicked.connect(self.export_csv)
+        self.recover_btn.clicked.connect(self.recover_from_temp_log)
+        self.clear_temp_btn.clicked.connect(self.clear_temp_log)
         self.pause_btn.clicked.connect(self.toggle_pause)
+
+
+
 
     def toggle_stream_mode(self):
         self.com_dropdown.setEnabled(self.com_radio.isChecked())
@@ -274,6 +337,30 @@ class SensorDashboard(QWidget):
         self.canvas.draw()
         self.start_btn.setEnabled(True)
         self.warning_label.hide()
+        if self.session_data:
+            temp_path = os.path.join(self.logs_dir, "temp_log.csv")
+            try:
+                with open(temp_path, mode='a', newline='') as temp_file:
+                    writer = csv.writer(temp_file)
+                    writer.writerow([f"--- SESSION START: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')} ---"])
+                    writer.writerow(["Relative Timestamp (ms)", "GMT Timestamp", "Lux"])
+                    for rel_ts, gmt_ts, lux in self.session_data:
+                        writer.writerow([rel_ts, gmt_ts, lux])
+                    writer.writerow([])
+                    writer.writerow(["Summary"])
+                    lux_values = [entry[2] for entry in self.session_data]
+                    writer.writerow(["Min", "Max", "Avg"])
+                    writer.writerow([
+                        f"{min(lux_values):.2f}",
+                        f"{max(lux_values):.2f}",
+                        f"{sum(lux_values)/len(lux_values):.2f}"
+                    ])
+                    writer.writerow([f"--- SESSION END ---", "", ""])
+
+            except Exception as e:
+                print(f"[Temp Log Export Failed]: {e}")
+            self.session_data.clear()
+
 
 
     def reset_timer(self):
@@ -281,17 +368,42 @@ class SensorDashboard(QWidget):
         self.clear_plot()
 
     def export_csv(self):
-        path, _ = QFileDialog.getSaveFileName(self, "Export CSV", "lux_data.csv", "CSV files (*.csv)")
-        if path:
-            with open(path, mode='w', newline='') as outfile:
+        if not self.session_data:
+            QMessageBox.information(self, "No Data", "No session data to export.")
+            return
+
+        timestamp = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+        filename = f"lux_data_{timestamp}.csv"
+        filepath = os.path.join(self.logs_dir, filename)
+
+        try:
+            with open(filepath, mode='w', newline='') as outfile:
                 writer = csv.writer(outfile)
-                writer.writerow(["Timestamp", "Lux"])
-                for ts, lux in zip(self.gmt_timestamps, self.gmt_data):
-                    writer.writerow([ts, lux])
+                writer.writerow(["Relative Timestamp (ms)", "GMT Timestamp", "Lux"])
+                for rel_ts, gmt_ts, lux in self.session_data:
+                    writer.writerow([rel_ts, gmt_ts, lux])
+
+                # Summary row
+                lux_values = [entry[2] for entry in self.session_data]
+                writer.writerow([])
+                writer.writerow(["Summary"])
+                writer.writerow(["Min", "Max", "Avg"])
+                writer.writerow([
+                    f"{min(lux_values):.2f}",
+                    f"{max(lux_values):.2f}",
+                    f"{sum(lux_values)/len(lux_values):.2f}"
+                ])
+
+            QMessageBox.information(self, "Export Successful", f"Data exported to:\n{filepath}")
+            self.session_data.clear()
+
+        except Exception as e:
+            QMessageBox.warning(self, "Export Failed", f"Could not export data:\n{e}")
 
     def send_to_adafruit(self, lux):
         try:
             aio.send(AIO_FEED, lux)
+            print(f"[Adafruit IO] Uploaded Lux: {lux}")  # ✅ add this line back
             self.adafruit_status.setText("Adafruit IO: Updated")
             self.adafruit_status.setStyleSheet("color: green; font-size: 14px;")
         except Exception as e:
@@ -379,13 +491,15 @@ class SensorDashboard(QWidget):
         self.relative_data.append(lux)
         self.gmt_timestamps.append(gmt_ts)
         self.gmt_data.append(lux)
-        self.log_to_csv(gmt_ts, lux)
+        #self.log_to_csv(gmt_ts, lux) # Disabled logging to lux_log.csv
 
         self.current_lux_label.setText(f"Current Lux: {lux:.2f}")
         self.min_label.setText(f"Min: {min(self.gmt_data):.2f}")
         self.max_label.setText(f"Max: {max(self.gmt_data):.2f}")
         self.avg_label.setText(f"Avg: {sum(self.gmt_data)/len(self.gmt_data):.2f}")
         self.updated_label.setText(f"Last Updated: {gmt_ts.strftime('%H:%M:%S')}")
+        self.session_data.append((rel_ts, gmt_ts.strftime("%Y-%m-%d %H:%M:%S"), lux))
+
 
 
     def update_plot(self):
@@ -410,14 +524,65 @@ class SensorDashboard(QWidget):
             QTimer.singleShot(100, self.update_plot)
 
 
-    def log_to_csv(self, timestamp, lux):
-        with open(CSV_FILE, mode='a', newline='') as file:
-            writer = csv.writer(file)
-            writer.writerow([timestamp, lux])
+    # def log_to_csv(self, timestamp, lux):
+    #     with open(CSV_FILE, mode='a', newline='') as file:
+    #         writer = csv.writer(file)
+    #         writer.writerow([timestamp, lux])
+            
+    def write_to_temp_log(self):
+        temp_path = os.path.join(self.logs_dir, "temp_log.csv")
+        try:
+            with open(temp_path, mode='a', newline='') as temp_file:
+                writer = csv.writer(temp_file)
+                writer.writerow([f"--- SESSION START: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')} ---"])
+                writer.writerow(["Relative Timestamp (ms)", "GMT Timestamp", "Lux"])
+                for rel_ts, gmt_ts, lux in self.session_data:
+                    writer.writerow([rel_ts, gmt_ts, lux])
+                writer.writerow([])
+                writer.writerow(["Summary"])
+                lux_values = [entry[2] for entry in self.session_data]
+                writer.writerow(["Min", "Max", "Avg"])
+                writer.writerow([
+                    f"{min(lux_values):.2f}",
+                    f"{max(lux_values):.2f}",
+                    f"{sum(lux_values)/len(lux_values):.2f}"
+                ])
+                writer.writerow([f"--- SESSION END ---", "", ""])
+        except Exception as e:
+            print(f"[Temp Log Export Failed]: {e}")
+            
+    def recover_from_temp_log(self):
+        temp_path = os.path.join(self.logs_dir, "temp_log.csv")
+        if not os.path.exists(temp_path):
+            QMessageBox.information(self, "No Temp Log", "No temp_log.csv file found.")
+            return
+
+        try:
+            self.session_data.clear()
+            with open(temp_path, newline='') as f:
+                reader = csv.reader(f)
+                for row in reader:
+                    if row and row[0].isdigit():
+                        self.session_data.append((int(row[0]), row[1], float(row[2])))
+            QMessageBox.information(self, "Recovery Successful", "Data recovered from temp_log.csv.")
+        except Exception as e:
+            QMessageBox.warning(self, "Recovery Failed", f"Could not recover data:\n{e}")
+
+    def clear_temp_log(self):
+        temp_path = os.path.join(self.logs_dir, "temp_log.csv")
+        if os.path.exists(temp_path):
+            os.remove(temp_path)
+            QMessageBox.information(self, "Temp Log Cleared", "temp_log.csv has been deleted.")
+        else:
+            QMessageBox.information(self, "No Temp Log", "No temp_log.csv file to delete.")
+
             
     def closeEvent(self, event):
-        self.stop_stream()  # Gracefully stop everything
-        super().closeEvent(event)
+        if self.session_data:
+            self.write_to_temp_log()
+
+        self.stop_stream()  # Gracefully stop MQTT/serial
+        super().closeEvent(event)  # Pass to Qt base class for actual window close
 
 
 if __name__ == '__main__':
