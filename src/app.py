@@ -10,6 +10,7 @@ from PyQt5.QtWidgets import (QApplication, QWidget, QVBoxLayout, QPushButton,
                              QLabel, QComboBox, QHBoxLayout, QGroupBox,
                              QRadioButton, QButtonGroup, QFileDialog)
 from PyQt5.QtCore import QTimer, Qt
+from PyQt5.QtGui import QStandardItemModel, QStandardItem
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
 from threading import Thread, Event
@@ -67,8 +68,8 @@ class SensorDashboard(QWidget):
         # COM Dropdown
         self.com_label = QLabel("Select COM Port:")
         self.com_dropdown = QComboBox()
-        self.com_dropdown.setEnabled(False)
         self.refresh_com_ports()
+        self.com_dropdown.setEnabled(False)
 
         # Time Axis Group
         time_group = QGroupBox("Time Axis Mode")
@@ -84,14 +85,23 @@ class SensorDashboard(QWidget):
         time_layout.addWidget(self.gmt_radio)
         time_group.setLayout(time_layout)
 
-        # Buttons
+        # Button Group
+        control_box = QGroupBox("Controls")
         self.start_btn = QPushButton("Start")
+        self.pause_btn = QPushButton("Pause")
         self.stop_btn = QPushButton("Stop")
         self.clear_btn = QPushButton("Clear")
         self.reset_btn = QPushButton("Reset Timer")
         self.export_btn = QPushButton("Export CSV")
-        self.pause_btn = QPushButton("Pause")
         self.stop_btn.setEnabled(False)
+
+        button_layout = QHBoxLayout()
+        button_layout.addWidget(self.start_btn)
+        button_layout.addWidget(self.pause_btn)
+        button_layout.addWidget(self.stop_btn)
+        button_layout.addWidget(self.clear_btn)
+        button_layout.addWidget(self.reset_btn)
+        control_box.setLayout(button_layout)
 
         self.current_lux_label = QLabel("Current Lux: --")
         self.current_lux_label.setAlignment(Qt.AlignCenter)
@@ -101,20 +111,47 @@ class SensorDashboard(QWidget):
         self.adafruit_status.setAlignment(Qt.AlignCenter)
         self.adafruit_status.setStyleSheet("color: gray; font-size: 14px;")
 
-        self.stats_label = QLabel("Min: -- Max: -- Avg: -- | Last Updated: --")
-        self.stats_label.setAlignment(Qt.AlignCenter)
-        self.stats_label.setStyleSheet("font-size: 14px;")
+        self.min_label = QLabel("Min: --")
+        self.max_label = QLabel("Max: --")
+        self.avg_label = QLabel("Avg: --")
+        
+        for lbl in [self.min_label, self.max_label, self.avg_label]:
+            lbl.setAlignment(Qt.AlignCenter)
+            lbl.setStyleSheet("""
+                border: 1px solid gray;
+                padding: 4px;
+                font-size: 14px;
+                border-radius: 4px;
+                min-width: 80px;
+            """)
+            
+        # Last Updated Timestamp Label
+        self.updated_label = QLabel("Last Updated: --")
+        self.updated_label.setAlignment(Qt.AlignCenter)
+        self.updated_label.setStyleSheet("""
+            font-size: 11px;
+            font-style: italic;
+            color: gray;
+            margin-top: 4px;
+        """)
+        
+        # Warning alert
+        self.warning_label = QLabel("Please clear the plot before restarting.")
+        self.warning_label.setAlignment(Qt.AlignCenter)
+        self.warning_label.setStyleSheet("""
+            font-size: 11px;
+            font-style: italic;
+            color: darkred;
+        """)
+        self.warning_label.hide()
+
+
 
         controls = QHBoxLayout()
         controls.addWidget(stream_group)
         controls.addWidget(self.com_label)
         controls.addWidget(self.com_dropdown)
         controls.addWidget(time_group)
-        controls.addWidget(self.start_btn)
-        controls.addWidget(self.stop_btn)
-        controls.addWidget(self.clear_btn)
-        controls.addWidget(self.reset_btn)
-        controls.addWidget(self.pause_btn)
         controls.addWidget(self.export_btn)
 
         self.figure = Figure()
@@ -123,15 +160,28 @@ class SensorDashboard(QWidget):
         self.ax.set_xlabel("Time")
         self.ax.set_ylabel("Lux")
 
+        # Create stats layout with borders and spacing
+        stats_layout = QHBoxLayout()
+        stats_layout.setSpacing(15)
+        stats_layout.addStretch()
+        stats_layout.addWidget(self.min_label)
+        stats_layout.addWidget(self.max_label)
+        stats_layout.addWidget(self.avg_label)
+        stats_layout.addStretch()
+
+        # Main layout setup
         layout = QVBoxLayout()
         layout.addLayout(controls)
+        layout.addWidget(control_box)
         layout.addWidget(self.canvas)
+        layout.addWidget(self.warning_label)
         layout.addWidget(self.current_lux_label)
         layout.addWidget(self.adafruit_status)
-        layout.addWidget(self.stats_label)
+        layout.addLayout(stats_layout) 
+        layout.addLayout(stats_layout)
+        layout.addWidget(self.updated_label)
         self.setLayout(layout)
 
-        # Button Events
         self.start_btn.clicked.connect(self.start_stream)
         self.stop_btn.clicked.connect(self.stop_stream)
         self.clear_btn.clicked.connect(self.clear_plot)
@@ -152,9 +202,30 @@ class SensorDashboard(QWidget):
     def refresh_com_ports(self):
         self.com_dropdown.clear()
         ports = serial.tools.list_ports.comports()
-        for port in ports:
-            self.com_dropdown.addItem(port.device)
+        detected_sensor_port = None
 
+        for port in ports:
+            try:
+                with serial.Serial(port.device, 115200, timeout=1) as ser:
+                    line = ser.readline().decode().strip()
+                    parts = line.split(",")
+                    if len(parts) == 2:
+                        float(parts[1])  # If second value is a float, it’s a sensor
+                        detected_sensor_port = port.device
+                        break
+            except:
+                continue
+
+        for port in ports:
+            label = f"{port.device} (Detected Sensor Port)" if port.device == detected_sensor_port else port.device
+            self.com_dropdown.addItem(label)
+
+        if detected_sensor_port:
+            self.com_dropdown.setCurrentIndex(
+                self.com_dropdown.findText(f"{detected_sensor_port} (Detected Sensor Port)")
+            )
+        
+        
     def start_stream(self):
         if self.running:
             return
@@ -165,7 +236,8 @@ class SensorDashboard(QWidget):
         self.stop_btn.setEnabled(True)
 
         if self.com_radio.isChecked():
-            selected_port = self.com_dropdown.currentText()
+            selected_label = self.com_dropdown.currentText()
+            selected_port = selected_label.split(" ")[0]  # Extract port before any label
             if selected_port:
                 self.serial_thread = Thread(target=self.read_serial, args=(selected_port,), daemon=True)
                 self.serial_thread.start()
@@ -173,20 +245,23 @@ class SensorDashboard(QWidget):
             self.mqtt_thread = Thread(target=self.read_mqtt, daemon=True)
             self.mqtt_thread.start()
 
-        self.update_plot()
+        QTimer.singleShot(100, self.update_plot)
 
     def stop_stream(self):
         self.running = False
         self.stop_event.set()
-        self.start_btn.setEnabled(True)
+        self.start_btn.setEnabled(False)
+        self.warning_label.show()
         self.stop_btn.setEnabled(False)
         if self.mqtt_client:
             try:
                 self.mqtt_client.loop_stop()
                 self.mqtt_client.disconnect()
-            except:
-                pass
-            self.mqtt_client = None
+            except Exception as e:
+                print(f"[MQTT] Cleanup Error: {e}")
+            finally:
+                self.mqtt_client = None
+
 
     def clear_plot(self):
         self.relative_data.clear()
@@ -194,9 +269,12 @@ class SensorDashboard(QWidget):
         self.gmt_data.clear()
         self.gmt_timestamps.clear()
         self.ax.cla()
-        self.ax.set_xlabel("Time")
+        self.ax.set_xlabel("Time (ms)")
         self.ax.set_ylabel("Lux")
         self.canvas.draw()
+        self.start_btn.setEnabled(True)
+        self.warning_label.hide()
+
 
     def reset_timer(self):
         self.timer_start_time = time.time()
@@ -264,9 +342,14 @@ class SensorDashboard(QWidget):
             while self.running and not self.stop_event.is_set():
                 time.sleep(0.1)
 
-            self.mqtt_client.loop_stop()
-            self.mqtt_client.disconnect()
-            self.mqtt_client = None
+            if self.mqtt_client:
+                try:
+                    self.mqtt_client.loop_stop()
+                    self.mqtt_client.disconnect()
+                except Exception as e:
+                    print(f"[MQTT] Cleanup Error: {e}")
+                finally:
+                    self.mqtt_client = None
 
         except Exception as e:
             print(f"[MQTT] Connection Error: {e}")
@@ -299,15 +382,19 @@ class SensorDashboard(QWidget):
         self.log_to_csv(gmt_ts, lux)
 
         self.current_lux_label.setText(f"Current Lux: {lux:.2f}")
-        stats = f"Min: {min(self.gmt_data):.2f} Max: {max(self.gmt_data):.2f} Avg: {sum(self.gmt_data)/len(self.gmt_data):.2f} | Last Updated: {gmt_ts.strftime('%H:%M:%S')}"
-        self.stats_label.setText(stats)
+        self.min_label.setText(f"Min: {min(self.gmt_data):.2f}")
+        self.max_label.setText(f"Max: {max(self.gmt_data):.2f}")
+        self.avg_label.setText(f"Avg: {sum(self.gmt_data)/len(self.gmt_data):.2f}")
+        self.updated_label.setText(f"Last Updated: {gmt_ts.strftime('%H:%M:%S')}")
+
 
     def update_plot(self):
-        if self.running and not self.paused:
+        if self.running:
             self.ax.cla()
             if self.timestamp_mode == "GMT":
-                times = [ts.strftime("%H:%M:%S") for ts in list(self.gmt_timestamps)]
+                timestamps_copy = list(self.gmt_timestamps)
                 data = list(self.gmt_data)
+                times = [ts.strftime("%H:%M:%S") for ts in timestamps_copy]
                 self.ax.set_xlabel("Time (GMT)")
             else:
                 times = list(self.relative_timestamps)
@@ -322,10 +409,16 @@ class SensorDashboard(QWidget):
             self.canvas.draw()
             QTimer.singleShot(100, self.update_plot)
 
+
     def log_to_csv(self, timestamp, lux):
         with open(CSV_FILE, mode='a', newline='') as file:
             writer = csv.writer(file)
             writer.writerow([timestamp, lux])
+            
+    def closeEvent(self, event):
+        self.stop_stream()  # Gracefully stop everything
+        super().closeEvent(event)
+
 
 if __name__ == '__main__':
     app = QApplication(sys.argv)
