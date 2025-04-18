@@ -5,6 +5,7 @@ import json
 import serial
 import os
 import datetime
+import boto3
 import serial.tools.list_ports
 import paho.mqtt.client as mqtt
 from PyQt5.QtWidgets import (QApplication, QWidget, QVBoxLayout, QPushButton,
@@ -29,8 +30,18 @@ CSV_FILE = "lux_log.csv"
 AIO_USERNAME = 'arc2233'
 AIO_KEY = os.getenv("ADAFRUIT_IO_KEY")
 AIO_FEED = 'light-sensor'
+AWS_ACCESS_KEY_ID = os.getenv("AWS_ACCESS_KEY_ID")
+AWS_SECRET_ACCESS_KEY = os.getenv("AWS_SECRET_ACCESS_KEY")
+AWS_S3_BUCKET = os.getenv("AWS_S3_BUCKET")
+
 
 aio = Client(AIO_USERNAME, AIO_KEY)
+
+s3_client = boto3.client(
+    's3',
+    aws_access_key_id=AWS_ACCESS_KEY_ID,
+    aws_secret_access_key=AWS_SECRET_ACCESS_KEY
+)
 
 class SensorDashboard(QWidget):
     def __init__(self):
@@ -399,6 +410,8 @@ class SensorDashboard(QWidget):
 
         except Exception as e:
             QMessageBox.warning(self, "Export Failed", f"Could not export data:\n{e}")
+        self.upload_to_s3(filepath)
+
 
     def send_to_adafruit(self, lux):
         try:
@@ -575,6 +588,20 @@ class SensorDashboard(QWidget):
             QMessageBox.information(self, "Temp Log Cleared", "temp_log.csv has been deleted.")
         else:
             QMessageBox.information(self, "No Temp Log", "No temp_log.csv file to delete.")
+
+    def upload_to_s3(self, filepath):
+        filename = os.path.basename(filepath)
+
+        # Auto-create folder path: YYYY/MM/DD/filename.csv
+        today = datetime.datetime.now()
+        s3_key = f"{today.year}/{today.month:02d}/{today.day:02d}/{filename}"
+
+        try:
+            s3_client.upload_file(filepath, AWS_S3_BUCKET, s3_key)
+            print(f"[S3] Uploaded to: s3://{AWS_S3_BUCKET}/{s3_key}")
+        except Exception as e:
+            print(f"[S3] Upload failed: {e}")
+
 
             
     def closeEvent(self, event):
