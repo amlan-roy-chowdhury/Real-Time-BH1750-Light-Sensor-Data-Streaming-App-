@@ -1,5 +1,5 @@
 .DS_Store
 .env
 logs
-/psycopg2/
-/psycopg2_binary-2.9.10.dist-info/
+lambda_postgres_etl/psycopg2/
+lambda_postgres_etl/psycopg2_binary-2.9.10.dist-info/
