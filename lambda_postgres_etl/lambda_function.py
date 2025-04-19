@@ -5,7 +5,6 @@ import csv
 from io import StringIO
 from datetime import datetime
 
-
 s3 = boto3.client('s3')
 
 DB_HOST = os.getenv("DB_HOST")
@@ -15,7 +14,7 @@ DB_PASSWORD = os.getenv("DB_PASSWORD")
 S3_BUCKET = os.getenv("AWS_S3_BUCKET")
 
 def lambda_handler(event, context):
-    prefix = "logs/"
+    prefix = ""
     processed = 0
 
     # Connect to RDS
@@ -28,15 +27,13 @@ def lambda_handler(event, context):
         )
         cursor = conn.cursor()
     except Exception as e:
-        print(f"[ERROR] Could not connect to DB: {e}")
-        return {"status": "DB connection error"}
+        return {"status": "DB connection error", "error": str(e)}
 
     try:
         response = s3.list_objects_v2(Bucket=S3_BUCKET, Prefix=prefix)
         files = [obj['Key'] for obj in response.get('Contents', []) if obj['Key'].endswith('.csv')]
 
         for key in files:
-            print(f"[INFO] Processing file: {key}")
             obj = s3.get_object(Bucket=S3_BUCKET, Key=key)
             content = obj['Body'].read().decode('utf-8')
             reader = csv.reader(StringIO(content))
@@ -60,11 +57,9 @@ def lambda_handler(event, context):
             avg_lux = sum(data) / len(data)
             record_count = len(data)
 
-            # Try to infer file date from filename
-            file_date = None
             try:
                 name = os.path.basename(key)
-                date_part = name.split("_")[2].split(".")[0]  # Extract YYYY-MM-DD
+                date_part = name.split("_")[2].split(".")[0]
                 file_date = datetime.strptime(date_part, "%Y-%m-%d").date()
             except:
                 file_date = datetime.utcnow().date()
@@ -78,7 +73,7 @@ def lambda_handler(event, context):
             processed += 1
 
     except Exception as e:
-        print(f"[ERROR] ETL error: {e}")
+        return {"status": "ETL error", "error": str(e)}
 
     finally:
         cursor.close()
