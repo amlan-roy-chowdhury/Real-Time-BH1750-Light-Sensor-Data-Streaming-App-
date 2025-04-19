@@ -14,7 +14,8 @@ DB_PASSWORD = os.getenv("DB_PASSWORD")
 S3_BUCKET = os.getenv("AWS_S3_BUCKET")
 
 def lambda_handler(event, context):
-    prefix = ""
+    today = datetime.utcnow()
+    prefix = today.strftime("2025/%m/%d/")
     processed = 0
 
     # Connect to RDS
@@ -67,7 +68,14 @@ def lambda_handler(event, context):
             cursor.execute("""
                 INSERT INTO lux_file_summary (filename, file_date, record_count, min_lux, max_lux, avg_lux)
                 VALUES (%s, %s, %s, %s, %s, %s)
+                ON CONFLICT (filename) DO NOTHING
             """, (key, file_date, record_count, min_lux, max_lux, avg_lux))
+            
+            # Log whether the row was inserted or skipped
+            if cursor.rowcount == 0:
+                print(f"[SKIP] File already processed: {key}")
+            else:
+                print(f"[INSERT] File inserted: {key}")
 
             conn.commit()
             processed += 1
