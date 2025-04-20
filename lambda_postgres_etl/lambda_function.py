@@ -4,6 +4,7 @@ import psycopg2
 import csv
 from io import StringIO
 from datetime import datetime
+from zoneinfo import ZoneInfo
 
 s3 = boto3.client('s3')
 
@@ -14,8 +15,9 @@ DB_PASSWORD = os.getenv("DB_PASSWORD")
 S3_BUCKET = os.getenv("AWS_S3_BUCKET")
 
 def lambda_handler(event, context):
-    today = datetime.utcnow()
-    prefix = today.strftime("2025/%m/%d/")
+    # Set timezone to Eastern Time
+    eastern_time = datetime.now(ZoneInfo("America/New_York"))
+    prefix = eastern_time.strftime("2025/%m/%d/")
     processed = 0
 
     # Connect to RDS
