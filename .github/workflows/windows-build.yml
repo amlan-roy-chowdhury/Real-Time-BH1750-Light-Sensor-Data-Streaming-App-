@@ -3,8 +3,11 @@ name: Build Windows Executable
 on:
   push:
     tags:
-      - 'v*'  # Runs only when you push a version tag like v1.1.0
-  workflow_dispatch:  # Allows manual run via GitHub UI
+      - 'v*'  # Triggered when a version tag like v1.2.3 is pushed
+  workflow_dispatch:  # Allows manual run from GitHub UI
+
+permissions:
+  contents: write  # 👈 REQUIRED to allow the GITHUB_TOKEN to create releases and upload assets
 
 jobs:
   build:
@@ -27,16 +30,16 @@ jobs:
 
       - name: Build executable with PyInstaller
         run: |
-          echo "Starting PyInstaller build..."
+          echo "🔧 Starting PyInstaller build..."
           pyinstaller --clean --noconfirm --log-level=DEBUG --onefile --windowed src/main.py --name sensor_dashboard --paths src/
-          echo "PyInstaller build complete."
+          echo "✅ PyInstaller build complete."
 
       - name: Zip the executable
         run: |
-          echo "Zipping the built .exe file..."
+          echo "📦 Zipping the built .exe file..."
           cd dist
           powershell Compress-Archive -Path sensor_dashboard.exe -DestinationPath sensor_dashboard_windows.zip
-          echo "Zipping complete."
+          echo "✅ Zipping complete."
 
       - name: Upload Release Asset (only works on tag push)
         if: startsWith(github.ref, 'refs/tags/')
