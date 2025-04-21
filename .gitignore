@@ -1,9 +1,42 @@
+# macOS system files
 .DS_Store
-.env
-logs
-lambda_postgres_etl/psycopg2/
-lambda_postgres_etl/psycopg2_binary-2.9.10.dist-info/
-htmlcov
+
+# Python bytecode
+__pycache__/
+*.py[cod]
+
+# Virtual environment
+venv/
+env/
+
+# Logs
+logs/
 dist/logs/
+
+# Secrets
+.env
+
+# PyInstaller build artifacts
+build/
+dist/
+*.spec
+
+# Docker
+.dockerignore
 Dockerfile
 
+# Lambda deployment artifacts
+lambda_postgres_etl/psycopg2/
+lambda_postgres_etl/psycopg2_binary-2.9.10.dist-info/
+
+# Code coverage reports
+htmlcov/
+.coverage
+
+
+# OS temp files
+*.swp
+*.swo
+Thumbs.db
+ehthumbs.db
+Icon?

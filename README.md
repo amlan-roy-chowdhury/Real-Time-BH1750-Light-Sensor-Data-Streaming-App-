@@ -107,13 +107,18 @@ open htmlcov/index.html
 
 ## 🚀 Features
 
+- Real-time sensor data visualization from BH1750 (via ESP32)
+- Dynamic UI time mode switching: Relative and GMT
 - Dual stream mode: WiFi (MQTT) or COM (USB Serial)
+- Cloud sync with Adafruit IO (live) and AWS S3 + RDS (batch)
+- CSV Export with summary stats (Min, Max, Avg)
+- Grafana dashboard for historical data
+- Full cross-platform support (Windows, macOS)
 - Realtime matplotlib plotting
-- Dynamic UI mode switching (Relative vs GMT)
 - Data export with full stats
 - Temp log recovery
 - Adafruit IO push + AWS S3 upload
-- Modular, testable architecture (82%+ coverage)
+- Modular, testable architecture (84%+ coverage)
 - Pytest HTML and coverage reports
 
 ---
@@ -126,6 +131,44 @@ open htmlcov/index.html
 - Dockerized deployment with one-click launch
 
 ---
+
+## 📦 Other Downloads
+
+| Platform | Version | Download |
+|----------|---------|----------|
+| Windows (.exe) | v1.2.4 | [sensor_dashboard_windows.zip](https://github.com/amlan-roy-chowdhury/Real-Time-BH1750-Light-Sensor-Data-Streaming-App-/releases/download/v1.2.4/sensor_dashboard_windows.zip) |
+| macOS (.app) | Coming soon | TBD |
+
+---
+
+## 📋 Changelog
+
+| Version | Notes |
+|---------|-------|
+| v1.2.4  | Initial automated Windows release with zipped `.exe` |
+| _..._   | _More releases coming soon_ |
+
+---
+
+## 🪟 Download for Windows
+
+📦 **[Download sensor_dashboard_windows.zip](https://github.com/amlan-roy-chowdhury/Real-Time-BH1750-Light-Sensor-Data-Streaming-App-/releases/download/v1.2.4/sensor_dashboard_windows.zip)**  
+💡 No installation required – just unzip and run the `.exe`.
+
+### ⚙️ How to Use:
+1. Download and unzip the archive
+2. Double-click `sensor_dashboard.exe` to launch the app
+3. If prompted with a security warning:
+   - Click **More Info** → **Run anyway**
+
+---
+
+## 🔧 Coming Soon
+
+- MSI Installer for Windows
+- macOS release `.dmg`
+- OTA update checker
+- Platform-independent launcher
 
 ## 🧑‍💻 Developed By
 
