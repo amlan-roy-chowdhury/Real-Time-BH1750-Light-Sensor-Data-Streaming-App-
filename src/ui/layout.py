@@ -479,5 +479,3 @@ class SensorDashboard(QWidget):
             write_temp_log(os.path.join(self.logs_dir, "temp_log.csv"), self.session_data)
         self.stop_stream()
         super().closeEvent(event)
-
-
